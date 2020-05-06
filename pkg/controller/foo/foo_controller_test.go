@@ -25,7 +25,7 @@ func TestFooController(t *testing.T) {
         replicas = int32(3)
     )
 
-    // A Memcached object with metadata and spec.
+    // A foo object with metadata and spec.
     foo := &foov1alpha1.Foo{
         ObjectMeta: metav1.ObjectMeta{
             Name:      name,
@@ -94,4 +94,8 @@ func TestFooController(t *testing.T) {
 	if dsize != replicas {
 		t.Errorf("dep size (%d) is not the expected size (%d)", dsize, replicas)
 	}
+}
+
+func TestCurstom(t *testing.T) {
+	t.Errorf("aiuei")
 }

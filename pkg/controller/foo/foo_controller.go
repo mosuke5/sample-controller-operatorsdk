@@ -119,6 +119,9 @@ func (r *ReconcileFoo) Reconcile(request reconcile.Request) (reconcile.Result, e
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
 			Namespace: request.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(instance, samplecontrollerv1alpha1.SchemeGroupVersion.WithKind("Foo")),
+			},
 		},
 	}
 
