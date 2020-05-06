@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 var log = logf.Log.WithName("controller_foo")
@@ -88,7 +89,6 @@ func (r *ReconcileFoo) Reconcile(request reconcile.Request) (reconcile.Result, e
 	reqLogger := log.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
 	reqLogger.Info("Reconciling Foo")
 	ctx := context.Background()
-
 	// Fetch the Foo instance
 	instance := &samplecontrollerv1alpha1.Foo{}
 	err := r.client.Get(ctx, request.NamespacedName, instance)
@@ -122,44 +122,66 @@ func (r *ReconcileFoo) Reconcile(request reconcile.Request) (reconcile.Result, e
 		},
 	}
 
-	// create deployment which has deploymentName and replicas by newDeployment method if it doesn't exist
-	if err := r.client.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: deploymentName}, deployment); err != nil {
-		if errors.IsNotFound(err) {
-			reqLogger.Info("could not find existing Deployment for Foo, creating one...")
-			// create deployment template using newDeployment method
-			deployment = newDeployment(instance)
+	// Create or Update deployment object
+	reqLogger.Info("create or update deployment")
+	if _, err := ctrl.CreateOrUpdate(ctx, r.client, deployment, func() error {
 
-			// create deployment object
-			if err := r.client.Create(ctx, deployment); err != nil {
-				reqLogger.Error(err, "failed to create Deployment resource")
-				// Error creating the object - requeue the request.
-				return reconcile.Result{}, err
-			}
+		// set the replicas from foo.Spec
+		replicas := int32(1)
+		if instance.Spec.Replicas != nil {
+			replicas = *instance.Spec.Replicas
+		}
+		deployment.Spec.Replicas = &replicas
 
-			reqLogger.Info("created Deployment resource for Foo")
-			return reconcile.Result{}, nil
+		// set a label for our deployment
+		labels := map[string]string{
+			"app":        "nginx",
+			"controller": instance.Name,
 		}
 
-		reqLogger.Error(err, "failed to get Deployment for Foo resource")
-		// Error reading the object - requeue the request.
-		return reconcile.Result{}, err
-	}
-
-	// compare foo.spec.replicas and deployment.spec.replicas
-	if instance.Spec.Replicas != nil && *instance.Spec.Replicas != *deployment.Spec.Replicas {
-		reqLogger.Info("unmatch spec","foo.spec.replicas", instance.Spec.Replicas, "deployment.spec.replicas", deployment.Spec.Replicas)
-		reqLogger.Info("Deployment replicas is not equal Foo replicas. reconcile this...")
-		// Update deployment spec
-		if err := r.client.Update(ctx, newDeployment(instance)); err != nil {
-			reqLogger.Error(err, "failed to update Deployment for Foo resource")
-			// Error updating the object - requeue the request.
-			return reconcile.Result{}, err
+		// set labels to objectmeta.labels
+		if deployment.ObjectMeta.Labels == nil {
+			deployment.ObjectMeta.Labels = labels
 		}
 
-		reqLogger.Info("updated Deployment spec for Foo")
-		return reconcile.Result{}, nil
-	}
+		// set labels to spec.selector for our deployment
+		if deployment.Spec.Selector == nil {
+			deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		}
 
+		// set labels to template.objectMeta for our deployment
+		if deployment.Spec.Template.ObjectMeta.Labels == nil {
+			deployment.Spec.Template.ObjectMeta.Labels = labels
+		}
+
+		// set a container for our deployment
+		containers := []corev1.Container{
+			{
+				Name:  "nginx",
+				Image: "nginx:latest",
+			},
+		}
+
+		// set containers to template.spec.containers for our deployment
+		if deployment.Spec.Template.Spec.Containers == nil {
+			deployment.Spec.Template.Spec.Containers = containers
+		}
+
+		// set the owner so that garbage collection can kicks in
+		//if err := ctrl.SetControllerReference(&instance, deployment, r.Scheme); err != nil {
+		//	log.Error(err, "unable to set ownerReference from Foo to Deployment")
+		//	return err
+		//}
+
+		// end of ctrl.CreateOrUpdate
+		return nil
+
+	}); err != nil {
+		// error handling of ctrl.CreateOrUpdate
+		log.Error(err, "unable to ensure deployment is correct")
+		return ctrl.Result{}, err
+	} 
+	
 	// compare foo.status.availableReplicas and deployment.status.availableReplicas
 	if instance.Status.AvailableReplicas != deployment.Status.AvailableReplicas {
 
@@ -227,41 +249,41 @@ func labelsForFoo(name string) map[string]string {
 // newDeployment creates a new Deployment for a Foo resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
 // the Foo resource that 'owns' it.
-func newDeployment(foo *samplecontrollerv1alpha1.Foo) *appsv1.Deployment {
-	labels := map[string]string{
-		"app":        "nginx",
-		"controller": foo.Name,
-	}
-	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      foo.Spec.DeploymentName,
-			Namespace: foo.Namespace,
-			Labels:    labels,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(foo, samplecontrollerv1alpha1.SchemeGroupVersion.WithKind("Foo")),
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: foo.Spec.Replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "nginx",
-							Image: "nginx:latest",
-						},
-					},
-				},
-			},
-		},
-	}
-}
+//func newDeployment(foo *samplecontrollerv1alpha1.Foo) *appsv1.Deployment {
+//	labels := map[string]string{
+//		"app":        "nginx",
+//		"controller": foo.Name,
+//	}
+//	return &appsv1.Deployment{
+//		ObjectMeta: metav1.ObjectMeta{
+//			Name:      foo.Spec.DeploymentName,
+//			Namespace: foo.Namespace,
+//			Labels:    labels,
+//			OwnerReferences: []metav1.OwnerReference{
+//				*metav1.NewControllerRef(foo, samplecontrollerv1alpha1.SchemeGroupVersion.WithKind("Foo")),
+//			},
+//		},
+//		Spec: appsv1.DeploymentSpec{
+//			Replicas: foo.Spec.Replicas,
+//			Selector: &metav1.LabelSelector{
+//				MatchLabels: labels,
+//			},
+//			Template: corev1.PodTemplateSpec{
+//				ObjectMeta: metav1.ObjectMeta{
+//					Labels: labels,
+//				},
+//				Spec: corev1.PodSpec{
+//					Containers: []corev1.Container{
+//						{
+//							Name:  "nginx",
+//							Image: "nginx:latest",
+//						},
+//					},
+//				},
+//			},
+//		},
+//	}
+//}
 
 // newPodForCR returns a busybox pod with the same name/namespace as the cr
 func newPodForCR(cr *samplecontrollerv1alpha1.Foo) *corev1.Pod {
